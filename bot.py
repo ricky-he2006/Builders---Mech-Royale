@@ -422,6 +422,9 @@ class Bot:
         self.w0 = None
         self.w1 = None
         self.gun_ammo = 12
+        self.survival_hp = 520.0
+        self.danger_radius = 60.0
+        self.cover_search_radius = 30.0
 
     # ------------------------------------------------------------ state
     def _new_enemy(self, m):
@@ -631,7 +634,7 @@ class Bot:
         if nr < 2.0:
             return (ncx, ncy), 60
         nd = math.hypot(mx - ncx, my - ncy)
-        safe = nr * 0.72
+        safe = nr * 0.62
         if nd > safe:
             gx = ncx + (mx - ncx) / nd * safe
             gy = ncy + (my - ncy) / nd * safe
@@ -745,9 +748,9 @@ class Bot:
         ex, ey, _ = e["pos"]
         d = math.hypot(ex - mx, ey - my)
         hp = me["hp"]
-        if hp < 300.0:
+        if hp < 700.0:
             return False
-        if hp < 520.0 and e["hp"] > hp:
+        if hp < self.survival_hp or d < 18.0:
             return False
         if d < 75.0 and self.gun_ammo <= 1:
             w1 = self.w1
@@ -1087,6 +1090,40 @@ class Bot:
             return True
         return self.map.wall_at(ax, ay, h)
 
+    def _break_los_goal(self, me, obs, tgt_id):
+        mx, my, mz = me["pos"]
+        if tgt_id is None:
+            return None
+        e = self.enemies.get(tgt_id)
+        if e is None:
+            return None
+        ex, ey, ez = e["pos"]
+        d = math.hypot(ex - mx, ey - my)
+        if d > self.danger_radius:
+            return None
+
+        enemy_height = ez + 4.5
+        best = None
+        best_score = -1e9
+        for r in (12.0, 18.0, 24.0, 30.0):
+            for k in range(16):
+                a = k * TWO_PI / 16.0
+                cx = mx + r * math.cos(a)
+                cy = my + r * math.sin(a)
+                cz = self.map.hgt(cx, cy)
+                if not self.map.clear(mx, my, cx, cy):
+                    continue
+                if self.map.los(ex, ey, enemy_height, cx, cy, cz + 4.5,
+                                [(c["pos"][0], c["pos"][1]) for c in obs.get("crates", [])]):
+                    continue
+                moved = math.hypot(cx - mx, cy - my)
+                away = ((mx - ex) * (cx - mx) + (my - ey) * (cy - my)) / max(d, 1.0)
+                score = 100.0 - moved - max(0.0, away) * 8.0
+                if score > best_score:
+                    best_score = score
+                    best = (cx, cy)
+        return best
+
     # ------------------------------------------------------------ movement
     def _move(self, obs, me, t, tgt_id, engaged, dodge, zone_goal, zone_urg):
         mx, my, _ = me["pos"]
@@ -1097,7 +1134,14 @@ class Bot:
         # 1. primary positional goal
         goal = None
         goal_w = 0.0
-        if zone_urg >= 40:
+        cover_goal = None
+        if zone_urg < 40:
+            cover_goal = self._break_los_goal(me, obs, tgt_id)
+        if cover_goal is not None:
+            goal, goal_w = cover_goal, 5.0
+            if energy > self.energy_floor:
+                boost = True
+        elif zone_urg >= 40:
             goal, goal_w = zone_goal, 3.0
         elif zone_urg >= 12:
             goal, goal_w = zone_goal, 1.6
@@ -1125,7 +1169,7 @@ class Bot:
                     if zone_urg >= 40 and energy > self.energy_floor and d > 50.0:
                         boost = True
         # 2. combat movement
-        if tgt_id is not None:
+        if tgt_id is not None and cover_goal is None:
             e = self.enemies.get(tgt_id)
             if e is not None:
                 ex, ey, _ = e["pos"]
