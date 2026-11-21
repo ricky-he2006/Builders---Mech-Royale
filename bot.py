@@ -320,9 +320,9 @@ class MapModel:
         came = [-1] * n
         closed = bytearray(n)
         gscore[s] = 0.0
-        ci0 = g // self.nx2
-        cj0 = g % self.nx2
-        openq = [((abs(s // self.nx2 - ci0) + abs(s % self.nx2 - cj0)) * 2.0, 0.0, s)]
+        ci0 = g % self.nx2
+        cj0 = g // self.nx2
+        openq = [((abs(s // self.nx2 - cj0) + abs(s % self.nx2 - ci0)) * 2.0, 0.0, s)]
         push = heapq.heappush
         pop = heapq.heappop
         pops = 0
@@ -360,7 +360,7 @@ class MapModel:
                 if nc < gscore[nb]:
                     gscore[nb] = nc
                     came[nb] = cur
-                    hh = (abs(ni - cj0) + abs(nj - ci0)) * 2.0
+                    hh = (abs(ni - ci0) + abs(nj - cj0)) * 2.0
                     push(openq, (nc + hh, nc, nb))
         if not closed[g]:
             return None
@@ -542,8 +542,13 @@ class Bot:
             sc = UPG.get(ch.get("id", ""), 3.0)
             if ch.get("id") in ("armor", "plating") and me["hp"] < me["max_hp"] * 0.6:
                 sc += 2.0
+            if ch.get("id") in ("armor", "plating") and me["hp"] < me["max_hp"] * 0.85:
+                sc += 1.0
             if ch.get("id") == "sensors":
                 sc += 1.0
+            if ch.get("id") in ("gun_damage", "laser_damage", "mortar_damage", "gun_rate",
+                                "lightning_efficiency", "laser_charge"):
+                sc += 0.5
             sc += self.rng.random() * 0.6
             if sc > best_sc:
                 best_sc = sc
@@ -704,6 +709,8 @@ class Bot:
             sc = 1400.0 / (1.0 + d / 25.0)
             if e["hp"] < 600.0:
                 sc += 550.0
+            if e["hp"] < 300.0:
+                sc += 700.0
             if t - e["shot_time"] < 2.5:
                 sc += 320.0
             sc += 10.0 * e.get("cubes", 0)
@@ -841,7 +848,7 @@ class Bot:
             # mortar: lob (no line of sight needed, it flies over cover)
             if not used and w1 and w1["kind"] == "mortar" and 15.0 < d < 205.0 and w1["cooldown"] <= 0.02:
                 st = w1["stats"]
-                muzzle_m = (mx, my, mz + stats.get("height", 9.0) + 0.5)
+                muzzle_m = (mx, my, mz + 9.5)
                 pitch, tfl = self._mortar_solve(muzzle_m, (ex, ey, tgt_z), (vx, vy, vz),
                                                 st.get("speed", 72.0), st.get("gravity", 22.0))
                 if pitch is not None:
@@ -861,10 +868,14 @@ class Bot:
                     aim = self._aim_at((mx, my, mz_h), pred)
                     ay, ap = me["aim"]
                     full = st.get("charge", 0.75)
-                    if charge >= full - 0.01 or abs(angdiff(aim[0], ay)) > 0.3 or d > 205.0:
+                    min_charge = st.get("min_charge", 0.15)
+                    aim_error = abs(angdiff(aim[0], ay)) + abs(aim[1] - ap)
+                    if charge >= full - 0.01 or (charge >= min_charge and aim_error < 0.18):
                         fire[1] = False  # release -> fires the beam
+                        used = True
                     else:
                         fire[1] = True   # keep holding
+                        used = True
                 elif w1["cooldown"] <= 0.02 and d > 48.0:
                     safe = True
                     for m2 in obs.get("mechs", []):
@@ -1105,6 +1116,8 @@ class Bot:
                 d = math.hypot(la[0] - mx, la[1] - my)
                 if d > 3.0:
                     weights.append((unit(la[0] - mx, la[1] - my), goal_w))
+                    if zone_urg >= 40 and energy > self.energy_floor:
+                        boost = True
             else:
                 d = math.hypot(goal[0] - mx, goal[1] - my)
                 if d > 6.0:
